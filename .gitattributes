@@ -1,3 +1,5 @@
 Assets/StreamingAssets/Videos/GoPro360.mp4 filter=lfs diff=lfs merge=lfs -text
 VR[[:space:]]Project/Assets/StreamingAssets/Videos/GoPro360.mp4 filter=lfs diff=lfs merge=lfs -text
 Library/PackageCache/com.unity.burst@6bb9aca3ef38/.Runtime/libburst-llvm-19.dylib filter=lfs diff=lfs merge=lfs -text
+*.mp4 filter=lfs diff=lfs merge=lfs -text
+*.apk filter=lfs diff=lfs merge=lfs -text

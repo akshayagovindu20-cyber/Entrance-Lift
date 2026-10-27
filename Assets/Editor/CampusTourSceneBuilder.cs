@@ -5,7 +5,9 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.UI;
+using UnityEngine.InputSystem.XR;
 using UnityEngine.UI;
 using UnityEngine.Video;
 using CampusTour;
@@ -24,24 +26,64 @@ namespace CampusTour.Editor
             // 1. Create or replace scene
             var newScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
 
-            // 2. Camera Setup for 360 degree panoramic viewing
+            // 2. XR Rig Root
+            GameObject xrRig = new GameObject("XRRig");
+            xrRig.transform.position = Vector3.zero;
+            xrRig.transform.rotation = Quaternion.identity;
+
+            // 2a. Camera Setup for 360 degree panoramic viewing
             GameObject cameraObj = new GameObject("Main Camera");
             cameraObj.tag = "MainCamera";
-            cameraObj.transform.position = Vector3.zero;
-            cameraObj.transform.rotation = Quaternion.identity;
+            cameraObj.transform.SetParent(xrRig.transform, false);
+            cameraObj.transform.localPosition = Vector3.zero;
+            cameraObj.transform.localRotation = Quaternion.identity;
 
             Camera cam = cameraObj.AddComponent<Camera>();
             cam.clearFlags = CameraClearFlags.Skybox;
             cam.fieldOfView = 75f;
-            cam.nearClipPlane = 0.1f;
+            cam.nearClipPlane = 0.05f;
             cam.farClipPlane = 1000f;
             cameraObj.AddComponent<AudioListener>();
 
-            // Input System Camera Controller
+            // VR Headset TrackedPoseDriver for 360 Head Tracking (pitch, yaw, roll)
+            TrackedPoseDriver headDriver = cameraObj.AddComponent<TrackedPoseDriver>();
+            headDriver.positionInput = new InputActionProperty(new InputAction(
+                "HMDPosition",
+                InputActionType.Value,
+                "<XRHMD>/centerEyePosition",
+                expectedControlType: "Vector3"));
+            headDriver.rotationInput = new InputActionProperty(new InputAction(
+                "HMDRotation",
+                InputActionType.Value,
+                "<XRHMD>/centerEyeRotation",
+                expectedControlType: "Quaternion"));
+            headDriver.trackingType = TrackedPoseDriver.TrackingType.RotationAndPosition;
+            headDriver.positionInput.action.Enable();
+            headDriver.rotationInput.action.Enable();
+
+            // Input System Camera Controller (handles non-VR fallback, mobile gyro, and VR thumbstick snap turning)
             CameraController cameraCtrl = cameraObj.AddComponent<CameraController>();
+            cameraCtrl.SetXRRig(xrRig.transform);
 
             // Add PhysicsRaycaster for 3D world interaction if needed
             cameraObj.AddComponent<PhysicsRaycaster>();
+
+            // 2b. Add Left and Right VR Controllers with Visualizers
+            GameObject leftControllerObj = new GameObject("LeftController");
+            leftControllerObj.transform.SetParent(xrRig.transform, false);
+            leftControllerObj.transform.localPosition = new Vector3(-0.2f, -0.1f, 0.35f);
+            VRControllerVisualizer leftCtrl = leftControllerObj.AddComponent<VRControllerVisualizer>();
+            SerializedObject soLeft = new SerializedObject(leftCtrl);
+            soLeft.FindProperty("hand").enumValueIndex = (int)VRControllerVisualizer.ControllerHand.Left;
+            soLeft.ApplyModifiedProperties();
+
+            GameObject rightControllerObj = new GameObject("RightController");
+            rightControllerObj.transform.SetParent(xrRig.transform, false);
+            rightControllerObj.transform.localPosition = new Vector3(0.2f, -0.1f, 0.35f);
+            VRControllerVisualizer rightCtrl = rightControllerObj.AddComponent<VRControllerVisualizer>();
+            SerializedObject soRight = new SerializedObject(rightCtrl);
+            soRight.FindProperty("hand").enumValueIndex = (int)VRControllerVisualizer.ControllerHand.Right;
+            soRight.ApplyModifiedProperties();
 
             // 3. Skybox Material
             Material skyboxMat = GetOrCreateSkyboxMaterial();
@@ -62,7 +104,7 @@ namespace CampusTour.Editor
             eventSystemObj.AddComponent<EventSystem>();
             eventSystemObj.AddComponent<InputSystemUIInputModule>();
 
-            CampusTourUI tourUI = BuildUserInterface(videoSphereMgr);
+            CampusTourUI tourUI = BuildUserInterface(videoSphereMgr, cam);
 
             // 7. Tour Manager Root
             GameObject tourManagerObj = new GameObject("CampusTourManager");
@@ -85,7 +127,10 @@ namespace CampusTour.Editor
             AddSceneToBuildSettings(ScenePath);
 
             Debug.Log($"<color=green>[Campus VR Tour]</color> Scene successfully generated and saved at '{ScenePath}'. Build Settings updated!");
-            EditorUtility.DisplayDialog("Campus VR Tour", "Campus Tour scene generated successfully!\n\nOpen Assets/Scenes/CampusTour.unity and press Play in the Editor to test.", "OK");
+            if (!Application.isBatchMode)
+            {
+                EditorUtility.DisplayDialog("Campus VR Tour", "Campus Tour scene generated successfully!\n\nOpen Assets/Scenes/CampusTour.unity and press Play in the Editor to test.", "OK");
+            }
         }
 
         private static void EnsureRequiredDirectories()
@@ -115,14 +160,16 @@ namespace CampusTour.Editor
             return mat;
         }
 
-        private static CampusTourUI BuildUserInterface(VideoSphereManager videoMgr)
+        private static CampusTourUI BuildUserInterface(VideoSphereManager videoMgr, Camera cam)
         {
             Font defaultFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
 
             // Canvas
             GameObject canvasObj = new GameObject("TourCanvas");
             Canvas canvas = canvasObj.AddComponent<Canvas>();
-            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            canvas.renderMode = RenderMode.ScreenSpaceCamera;
+            canvas.worldCamera = cam;
+            canvas.planeDistance = 1.8f;
             CanvasScaler scaler = canvasObj.AddComponent<CanvasScaler>();
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
             scaler.referenceResolution = new Vector2(1920, 1080);
@@ -218,12 +265,17 @@ namespace CampusTour.Editor
 
             // Progress Slider
             GameObject sliderObj = CreateSlider("ProgressBar", bottomBar.transform);
-            SetRect(sliderObj, new Vector2(0.29f, 0.35f), new Vector2(0.83f, 0.65f), Vector2.zero, Vector2.zero);
+            SetRect(sliderObj, new Vector2(0.24f, 0.35f), new Vector2(0.70f, 0.65f), Vector2.zero, Vector2.zero);
             Slider slider = sliderObj.GetComponent<Slider>();
+
+            // Back to Beginning Button ("⏮ Back")
+            GameObject backBtnObj = CreateButton("BackToBeginningBtn", bottomBar.transform, "⏮ Back", defaultFont, 15);
+            SetRect(backBtnObj, new Vector2(0.71f, 0.15f), new Vector2(0.81f, 0.85f), Vector2.zero, Vector2.zero);
+            Button backBtn = backBtnObj.GetComponent<Button>();
 
             // Time text
             GameObject timeObj = CreateUIObject("TimeText", bottomBar.transform);
-            SetRect(timeObj, new Vector2(0.84f, 0.15f), new Vector2(0.98f, 0.85f), Vector2.zero, Vector2.zero);
+            SetRect(timeObj, new Vector2(0.82f, 0.15f), new Vector2(0.98f, 0.85f), Vector2.zero, Vector2.zero);
             Text timeTxt = timeObj.AddComponent<Text>();
             timeTxt.font = defaultFont;
             timeTxt.fontSize = 14;
@@ -271,6 +323,28 @@ namespace CampusTour.Editor
             SetRect(popupCloseBtnObj, new Vector2(0.4f, 0.06f), new Vector2(0.6f, 0.2f), Vector2.zero, Vector2.zero);
             Button popupCloseBtn = popupCloseBtnObj.GetComponent<Button>();
 
+            // Start Application Menu Panel
+            GameObject startMenuPanelObj = CreateUIObject("StartMenuPanel", canvasObj.transform);
+            SetRect(startMenuPanelObj, new Vector2(0.25f, 0.25f), new Vector2(0.75f, 0.75f), Vector2.zero, Vector2.zero);
+            Image startMenuBg = startMenuPanelObj.AddComponent<Image>();
+            startMenuBg.color = new Color(0.04f, 0.06f, 0.1f, 0.96f);
+
+            Text startMenuTitle = CreateTextChild("StartMenuTitle", startMenuPanelObj.transform, "VR 360° Campus Tour", defaultFont, 28);
+            startMenuTitle.fontStyle = FontStyle.Bold;
+            startMenuTitle.alignment = TextAnchor.MiddleCenter;
+            SetRect(startMenuTitle.gameObject, new Vector2(0.05f, 0.7f), new Vector2(0.95f, 0.95f), Vector2.zero, Vector2.zero);
+
+            Text startMenuSubtitle = CreateTextChild("StartMenuSubtitle", startMenuPanelObj.transform, 
+                "• Right Controller Joystick: Push forward to Play, release to Pause\n• Left Controller Joystick: Move Left/Right & Up/Down\n• Click Start Application to begin", 
+                defaultFont, 16);
+            startMenuSubtitle.alignment = TextAnchor.MiddleCenter;
+            startMenuSubtitle.color = new Color(0.85f, 0.85f, 0.95f, 1f);
+            SetRect(startMenuSubtitle.gameObject, new Vector2(0.05f, 0.35f), new Vector2(0.95f, 0.68f), Vector2.zero, Vector2.zero);
+
+            GameObject startBtnObj = CreateButton("StartApplicationBtn", startMenuPanelObj.transform, "▶ Start Application", defaultFont, 22);
+            SetRect(startBtnObj, new Vector2(0.25f, 0.12f), new Vector2(0.75f, 0.30f), Vector2.zero, Vector2.zero);
+            Button startAppBtn = startBtnObj.GetComponent<Button>();
+
             // Assign via SerializedObject to CampusTourUI
             SerializedObject soUI = new SerializedObject(tourUI);
             soUI.FindProperty("locationTitleText").objectReferenceValue = titleTxt;
@@ -294,6 +368,9 @@ namespace CampusTour.Editor
             soUI.FindProperty("infoPopupTitle").objectReferenceValue = popupTitle;
             soUI.FindProperty("infoPopupContent").objectReferenceValue = popupDesc;
             soUI.FindProperty("infoPopupCloseButton").objectReferenceValue = popupCloseBtn;
+            soUI.FindProperty("startMenuPanel").objectReferenceValue = startMenuPanelObj;
+            soUI.FindProperty("startAppButton").objectReferenceValue = startAppBtn;
+            soUI.FindProperty("backToBeginningButton").objectReferenceValue = backBtn;
             soUI.FindProperty("screenFadeGroup").objectReferenceValue = fadeCg;
             soUI.ApplyModifiedProperties();
 

@@ -18,9 +18,11 @@ namespace CampusTour
 
         [Header("Transitions")]
         [SerializeField] private float fadeDuration = 0.5f;
+        [SerializeField] private bool showStartMenuOnLaunch = true;
 
         private int currentLocationIndex = -1;
         private bool isTransitioning = false;
+        private bool hasAppStarted = false;
 
         public IReadOnlyList<LocationData> Locations => locations;
         public int CurrentLocationIndex => currentLocationIndex;
@@ -32,6 +34,11 @@ namespace CampusTour
             if (hotspotManager == null) hotspotManager = GetComponentInChildren<HotspotManager>();
             if (tourUI == null) tourUI = GetComponentInChildren<CampusTourUI>();
 
+            if (cameraController != null && videoSphereManager != null)
+            {
+                cameraController.SetVideoSphereManager(videoSphereManager);
+            }
+
             EnsureDefaultLocations();
         }
 
@@ -40,12 +47,21 @@ namespace CampusTour
             if (cameraController != null)
             {
                 hotspotManager?.Initialize(cameraController.transform);
+                if (videoSphereManager != null)
+                {
+                    cameraController.SetVideoSphereManager(videoSphereManager);
+                }
             }
 
             if (tourUI != null)
             {
-                tourUI.Initialize(videoSphereManager, SelectLocation);
+                tourUI.Initialize(videoSphereManager, SelectLocation, HandleStartApp);
                 tourUI.BuildLocationMenu(locations, initialLocationIndex);
+
+                if (showStartMenuOnLaunch)
+                {
+                    tourUI.ShowStartMenu(true);
+                }
             }
 
             if (videoSphereManager != null)
@@ -55,6 +71,7 @@ namespace CampusTour
                 videoSphereManager.OnVideoError += HandleVideoError;
                 videoSphereManager.OnPlayPauseChanged += HandlePlayPauseChanged;
                 videoSphereManager.OnMuteChanged += HandleMuteChanged;
+                videoSphereManager.OnVideoLoadingStatus += HandleVideoLoadingStatus;
             }
 
             if (hotspotManager != null)
@@ -62,60 +79,90 @@ namespace CampusTour
                 hotspotManager.OnHotspotClicked += HandleHotspotClicked;
             }
 
-            // Load initial location
+            if (!showStartMenuOnLaunch)
+            {
+                HandleStartApp();
+            }
+        }
+
+        public void HandleStartApp()
+        {
+            hasAppStarted = true;
             SelectLocation(initialLocationIndex);
         }
 
         private void EnsureDefaultLocations()
         {
-            if (locations != null && locations.Count > 0) return;
+            if (locations != null && locations.Count >= 2 && locations[0].name.Contains("Entrance"))
+            {
+                return;
+            }
 
             locations = new List<LocationData>();
 
-            // Real single video location
-            LocationData realLocation = new LocationData
+            // Location 1: Entrance to the Lift
+            LocationData entranceLocation = new LocationData
             {
-                name = "GoPro 360° Tour",
+                name = "Entrance to the Lift",
                 videoFileName = "GoPro360.mp4",
-                description = "Explore the surroundings using the 360-degree GoPro video.",
+                description = "360° Panoramic view of the Entrance to the lift.",
                 isAvailable = true,
                 hotspots = new List<HotspotDefinition>
                 {
                     new HotspotDefinition
                     {
-                        title = "Main Perspective",
-                        type = HotspotType.Info,
-                        description = "Welcome to the 360° Campus Tour captured with GoPro! Look all around you in 360 degrees.",
+                        title = "Exit to the Lift",
+                        type = HotspotType.Navigation,
+                        description = "Click to transition to the Exit of the lift.",
                         yawDegrees = 0f,
-                        pitchDegrees = 0f,
-                        distance = 6f
+                        pitchDegrees = -5f,
+                        distance = 5f,
+                        targetLocationIndex = 1
                     },
                     new HotspotDefinition
                     {
-                        title = "Campus Environment",
+                        title = "Lift Entrance Area",
                         type = HotspotType.Info,
-                        description = "High resolution 360° equirectangular video sphere rendered directly into the skybox.",
+                        description = "Welcome to the Lift Entrance 360° VR experience. Turn all around you to explore.",
                         yawDegrees = 75f,
-                        pitchDegrees = -10f,
-                        distance = 6f
+                        pitchDegrees = 0f,
+                        distance = 5f
                     }
                 }
             };
-            locations.Add(realLocation);
+            locations.Add(entranceLocation);
 
-            // Expandable placeholder locations (marked unavailable per Step 5)
-            string[] placeholders = { "Main Gate", "Library", "Canteen", "Lab Block", "Playground" };
-            foreach (var name in placeholders)
+            // Location 2: Exit to the Lift
+            LocationData exitLocation = new LocationData
             {
-                locations.Add(new LocationData
+                name = "Exit to the Lift",
+                videoFileName = "GoPro360 1.mp4",
+                description = "360° Panoramic view exiting the lift.",
+                isAvailable = true,
+                hotspots = new List<HotspotDefinition>
                 {
-                    name = name,
-                    videoFileName = "",
-                    description = $"Future expansion spot: {name}. Add a 360° MP4 video file to enable this location.",
-                    isAvailable = false,
-                    hotspots = new List<HotspotDefinition>()
-                });
-            }
+                    new HotspotDefinition
+                    {
+                        title = "Entrance to the Lift",
+                        type = HotspotType.Navigation,
+                        description = "Click to return to the Entrance of the lift.",
+                        yawDegrees = 180f,
+                        pitchDegrees = -5f,
+                        distance = 5f,
+                        targetLocationIndex = 0
+                    },
+                    new HotspotDefinition
+                    {
+                        title = "Lift Exit Area",
+                        type = HotspotType.Info,
+                        description = "Lift Exit area. Turn 360 degrees to see the lobby and surroundings.",
+                        yawDegrees = -75f,
+                        pitchDegrees = 0f,
+                        distance = 5f
+                    }
+                }
+            };
+            locations.Add(exitLocation);
         }
 
         public void SelectLocation(int index)
@@ -167,6 +214,11 @@ namespace CampusTour
 
             // Wait until prepared or error
             // VideoSphereManager events will trigger fade back in
+        }
+
+        private void HandleVideoLoadingStatus(string status)
+        {
+            tourUI?.ShowLoading(status);
         }
 
         private void HandleVideoPreparationStarted()
@@ -242,6 +294,7 @@ namespace CampusTour
                 videoSphereManager.OnVideoError -= HandleVideoError;
                 videoSphereManager.OnPlayPauseChanged -= HandlePlayPauseChanged;
                 videoSphereManager.OnMuteChanged -= HandleMuteChanged;
+                videoSphereManager.OnVideoLoadingStatus -= HandleVideoLoadingStatus;
             }
 
             if (hotspotManager != null)

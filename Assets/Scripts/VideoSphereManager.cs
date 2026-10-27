@@ -27,6 +27,7 @@ namespace CampusTour
         public event Action OnVideoPreparationStarted;
         public event Action OnVideoPrepared;
         public event Action<string> OnVideoError;
+        public event Action<string> OnVideoLoadingStatus;
         public event Action<bool> OnPlayPauseChanged;
         public event Action<bool> OnMuteChanged;
 
@@ -114,25 +115,78 @@ namespace CampusTour
                 return;
             }
 
-            string fullPath = Path.Combine(Application.streamingAssetsPath, "Videos", fileName);
-
-            if (!Application.isMobilePlatform && !File.Exists(fullPath))
-            {
-                string msg = $"Video not found. Add your 360° GoPro video to Assets/StreamingAssets/Videos/{fileName}.";
-                Debug.LogWarning($"[CampusTour] {msg}");
-                OnVideoError?.Invoke(msg);
-                return;
-            }
-
-            StartCoroutine(PrepareAndPlayRoutine(fullPath));
+            StartCoroutine(PrepareAndPlayRoutine(fileName));
         }
 
-        private IEnumerator PrepareAndPlayRoutine(string url)
+        private IEnumerator PrepareAndPlayRoutine(string fileName)
         {
             OnVideoPreparationStarted?.Invoke();
 
+            string videoUrl = "";
+
+            if (Application.platform == RuntimePlatform.Android)
+            {
+                string targetDir = Path.Combine(Application.persistentDataPath, "Videos");
+                if (!Directory.Exists(targetDir))
+                {
+                    Directory.CreateDirectory(targetDir);
+                }
+                string targetFile = Path.Combine(targetDir, fileName);
+
+                // If file does not exist or has an incomplete size, extract from StreamingAssets
+                bool needsExtraction = true;
+                if (File.Exists(targetFile))
+                {
+                    FileInfo fi = new FileInfo(targetFile);
+                    if (fi.Length > 1024 * 1024) // already extracted (>1MB)
+                    {
+                        needsExtraction = false;
+                    }
+                }
+
+                if (needsExtraction)
+                {
+                    OnVideoLoadingStatus?.Invoke("Extracting 360° video for headset...");
+                    string sourceUri = Path.Combine(Application.streamingAssetsPath, "Videos", fileName).Replace('\\', '/');
+                    using (UnityEngine.Networking.UnityWebRequest uwr = new UnityEngine.Networking.UnityWebRequest(sourceUri, UnityEngine.Networking.UnityWebRequest.kHttpVerbGET))
+                    {
+                        uwr.downloadHandler = new UnityEngine.Networking.DownloadHandlerFile(targetFile);
+                        var asyncOp = uwr.SendWebRequest();
+                        while (!asyncOp.isDone)
+                        {
+                            int pct = Mathf.Clamp(Mathf.RoundToInt(uwr.downloadProgress * 100f), 0, 100);
+                            OnVideoLoadingStatus?.Invoke($"Extracting 360° video: {pct}%");
+                            yield return null;
+                        }
+
+                        if (uwr.result != UnityEngine.Networking.UnityWebRequest.Result.Success)
+                        {
+                            string err = $"Failed to extract video: {uwr.error}";
+                            Debug.LogError($"[CampusTour] {err}");
+                            OnVideoError?.Invoke(err);
+                            yield break;
+                        }
+                    }
+                }
+
+                videoUrl = targetFile;
+            }
+            else
+            {
+                string fullPath = Path.Combine(Application.streamingAssetsPath, "Videos", fileName);
+                if (!File.Exists(fullPath))
+                {
+                    string msg = $"Video not found at Assets/StreamingAssets/Videos/{fileName}.";
+                    Debug.LogWarning($"[CampusTour] {msg}");
+                    OnVideoError?.Invoke(msg);
+                    yield break;
+                }
+                videoUrl = fullPath;
+            }
+
+            OnVideoLoadingStatus?.Invoke("Preparing 360° video stream...");
             videoPlayer.Stop();
-            videoPlayer.url = url;
+            videoPlayer.url = videoUrl;
 
             try
             {
@@ -146,7 +200,7 @@ namespace CampusTour
                 yield break;
             }
 
-            float timeout = 15f;
+            float timeout = 30f;
             float timer = 0f;
 
             while (!videoPlayer.isPrepared && timer < timeout)
@@ -188,6 +242,34 @@ namespace CampusTour
             }
             else
             {
+                videoPlayer.Play();
+                OnPlayPauseChanged?.Invoke(true);
+            }
+        }
+
+        public void Play()
+        {
+            if (videoPlayer != null && !videoPlayer.isPlaying && IsPrepared)
+            {
+                videoPlayer.Play();
+                OnPlayPauseChanged?.Invoke(true);
+            }
+        }
+
+        public void Pause()
+        {
+            if (videoPlayer != null && videoPlayer.isPlaying)
+            {
+                videoPlayer.Pause();
+                OnPlayPauseChanged?.Invoke(false);
+            }
+        }
+
+        public void RestartFromBeginning()
+        {
+            if (videoPlayer != null && IsPrepared)
+            {
+                videoPlayer.time = 0.0;
                 videoPlayer.Play();
                 OnPlayPauseChanged?.Invoke(true);
             }

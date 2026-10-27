@@ -1,6 +1,9 @@
+using System;
+using System.IO;
 using System.Text;
 using UnityEditor;
 using UnityEditor.Build;
+using UnityEditor.Build.Reporting;
 using UnityEngine;
 
 namespace CampusTour.Editor
@@ -37,7 +40,7 @@ namespace CampusTour.Editor
                 sb.AppendLine("✔ Target Architecture: ARM64 already active.");
             }
 
-            // 3. Minimum Android SDK: API 25+ for modern Unity 6
+            // 3. Minimum Android SDK: API 25+ for modern Unity 6 & OpenXR
             var currentMinSdk = PlayerSettings.Android.minSdkVersion;
             if (currentMinSdk < AndroidSdkVersions.AndroidApiLevel25)
             {
@@ -46,7 +49,7 @@ namespace CampusTour.Editor
             }
             else
             {
-                sb.AppendLine($"✔ Min SDK: Currently set to {currentMinSdk} (meets API 24/25+ requirement).");
+                sb.AppendLine($"✔ Min SDK: Currently set to {currentMinSdk} (meets API 25+ requirement).");
             }
 
             // 4. Default Orientation: Landscape
@@ -81,7 +84,59 @@ namespace CampusTour.Editor
             }
 
             Debug.Log(sb.ToString());
-            EditorUtility.DisplayDialog("Campus VR Tour - Android Settings", sb.ToString(), "OK");
+            if (!Application.isBatchMode)
+            {
+                EditorUtility.DisplayDialog("Campus VR Tour - Android Settings", sb.ToString(), "OK");
+            }
+        }
+
+        [MenuItem("Tools/Campus VR Tour/Build Android APK")]
+        public static void BuildAndroidApk()
+        {
+            Debug.Log("[Campus VR Tour] Starting Android APK build process...");
+
+            // 1. Ensure Android Settings
+            ConfigureAndroidSettings();
+
+            // 2. Build / Update the Tour Scene
+            CampusTourSceneBuilder.BuildScene();
+
+            // 3. Collect scenes for build
+            string[] scenes = new string[] { "Assets/Scenes/CampusTour.unity" };
+
+            // 4. Output APK location
+            string outputApk = "C:/Users/aksha/EntranceLift/first.apk";
+
+            BuildPlayerOptions buildPlayerOptions = new BuildPlayerOptions
+            {
+                scenes = scenes,
+                locationPathName = outputApk,
+                target = BuildTarget.Android,
+                targetGroup = BuildTargetGroup.Android,
+                options = BuildOptions.None
+            };
+
+            Debug.Log($"[Campus VR Tour] Building APK to: {outputApk}");
+            BuildReport report = BuildPipeline.BuildPlayer(buildPlayerOptions);
+            BuildSummary summary = report.summary;
+
+            if (summary.result == BuildResult.Succeeded)
+            {
+                long sizeMb = (long)(summary.totalSize / (1024 * 1024));
+                Debug.Log($"<color=green>[Campus VR Tour] APK Build SUCCEEDED!</color> File: {outputApk} ({sizeMb} MB in {summary.totalTime.TotalSeconds:F1}s)");
+                if (!Application.isBatchMode)
+                {
+                    EditorUtility.DisplayDialog("Build Success", $"APK build succeeded!\n\nFile: {outputApk}\nSize: {sizeMb} MB", "OK");
+                }
+            }
+            else
+            {
+                Debug.LogError($"[Campus VR Tour] APK Build FAILED with result: {summary.result}. Errors: {summary.totalErrors}");
+                if (Application.isBatchMode)
+                {
+                    EditorApplication.Exit(1);
+                }
+            }
         }
     }
 }

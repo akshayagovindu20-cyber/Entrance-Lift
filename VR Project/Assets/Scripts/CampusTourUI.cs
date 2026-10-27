@@ -40,17 +40,36 @@ namespace CampusTour
         [SerializeField] private Text infoPopupContent;
         [SerializeField] private Button infoPopupCloseButton;
 
+        [Header("Start Menu")]
+        [SerializeField] private GameObject startMenuPanel;
+        [SerializeField] private Button startAppButton;
+        [SerializeField] private Button backToBeginningButton;
+
         [Header("Fade Transition")]
         [SerializeField] private CanvasGroup screenFadeGroup;
 
         private VideoSphereManager videoSphereManager;
         private Action<int> onLocationSelectedCallback;
+        private Action onStartAppCallback;
         private bool isLocationMenuOpen = false;
 
-        public void Initialize(VideoSphereManager videoMgr, Action<int> onLocationSelected)
+        public void Initialize(VideoSphereManager videoMgr, Action<int> onLocationSelected, Action onStartApp = null)
         {
             videoSphereManager = videoMgr;
             onLocationSelectedCallback = onLocationSelected;
+            onStartAppCallback = onStartApp;
+
+            Canvas canvas = GetComponent<Canvas>();
+            if (canvas != null)
+            {
+                Camera cam = Camera.main;
+                if (cam != null)
+                {
+                    canvas.renderMode = RenderMode.ScreenSpaceCamera;
+                    canvas.worldCamera = cam;
+                    canvas.planeDistance = 1.8f;
+                }
+            }
 
             if (menuToggleButton != null)
                 menuToggleButton.onClick.AddListener(ToggleLocationMenu);
@@ -70,6 +89,16 @@ namespace CampusTour
             if (progressBar != null)
             {
                 progressBar.onValueChanged.AddListener(OnProgressSliderChanged);
+            }
+
+            if (startAppButton != null)
+            {
+                startAppButton.onClick.AddListener(OnStartAppClicked);
+            }
+
+            if (backToBeginningButton != null)
+            {
+                backToBeginningButton.onClick.AddListener(OnBackToBeginningClicked);
             }
 
             if (errorPanel != null) errorPanel.SetActive(false);
@@ -256,6 +285,25 @@ namespace CampusTour
             {
                 muteText.text = isMuted ? "🔇 Unmute" : "🔊 Mute";
             }
+        }
+
+        public void ShowStartMenu(bool show)
+        {
+            if (startMenuPanel != null)
+            {
+                startMenuPanel.SetActive(show);
+            }
+        }
+
+        private void OnStartAppClicked()
+        {
+            ShowStartMenu(false);
+            onStartAppCallback?.Invoke();
+        }
+
+        private void OnBackToBeginningClicked()
+        {
+            videoSphereManager?.RestartFromBeginning();
         }
 
         private void OnPlayPauseClicked()
